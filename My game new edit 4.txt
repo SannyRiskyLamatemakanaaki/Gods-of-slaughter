@@ -1,0 +1,94 @@
+This `dungeon.html` file provides a clean, responsive interface for your combat. It includes the JavaScript logic to send requests to your `app.py` and display real-time updates.
+
+### File: `templates/dungeon.html`
+
+```html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Cultivator Era - Combat</title>
+    <style>
+        body { background: #1a1a2e; color: #e0e0e0; font-family: 'Segoe UI', sans-serif; display: flex; flex-direction: column; align-items: center; }
+        .combat-container { width: 90%; max-width: 600px; margin-top: 20px; }
+        .panel { background: #16213e; padding: 20px; border-radius: 10px; margin-bottom: 10px; border: 1px solid #4e4e6a; }
+        .hp-bar { height: 20px; background: #0f3460; width: 100%; margin: 10px 0; border-radius: 5px; overflow: hidden; }
+        .hp-fill { height: 100%; background: #e94560; transition: width 0.3s; }
+        button { padding: 10px 20px; background: #4e4e6a; color: white; border: none; cursor: pointer; border-radius: 5px; }
+        button:hover { background: #6a6a9b; }
+        #combat-log { height: 150px; overflow-y: auto; background: #0f3460; padding: 10px; font-size: 0.9em; }
+    </style>
+</head>
+<body>
+
+<div class="combat-container">
+    <h2>Dungeon: {{ dungeon.name }}</h2>
+
+    <!-- Player Stats -->
+    <div class="panel" id="player-panel">
+        <strong>{{ current_user.username }}</strong> (Lv. {{ current_user.level }})
+        <div class="hp-bar"><div id="player-hp" class="hp-fill" style="width: 100%;"></div></div>
+        <p>Gold: <span id="player-gold">{{ current_user.gold }}</span> | Agility: <span id="player-agility">{{ current_user.agility }}</span></p>
+    </div>
+
+    <!-- Monster Stats -->
+    <div class="panel" id="monster-panel">
+        <strong id="monster-name">Loading Monster...</strong>
+        <div class="hp-bar"><div id="monster-hp" class="hp-fill" style="width: 100%;"></div></div>
+    </div>
+
+    <!-- Combat Log -->
+    <div id="combat-log">Combat started...</div>
+
+    <div style="margin-top: 20px;">
+        <button onclick="attackMonster()">Attack</button>
+        <button onclick="window.location.href='/'">Flee</button>
+    </div>
+</div>
+
+<script>
+    // Assuming you have a monster ID in your session or passed in the URL
+    let currentMonsterId = 1; 
+
+    async function attackMonster() {
+        const response = await fetch('/combat/attack', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ monster_id: currentMonsterId })
+        });
+        
+        const data = await response.json();
+        const log = document.getElementById('combat-log');
+
+        if (data.status === 'victory') {
+            log.innerHTML += `<br><strong>Victory! You earned ${data.rewards.gold} gold!</strong>`;
+            alert('Victory! Rewards claimed.');
+            window.location.reload(); // Refresh to spawn next monster
+        } else {
+            // Update UI with combat results
+            updateHp('player-hp', data.combat.damage); // Logic needs to handle which side was hit
+            log.innerHTML += `<br>Monster hit you for ${data.combat.damage} damage.`;
+        }
+    }
+
+    function updateHp(elementId, damage) {
+        const bar = document.getElementById(elementId);
+        let width = parseInt(bar.style.width);
+        bar.style.width = (width - 10) + '%'; // Simplified calculation
+    }
+</script>
+
+</body>
+</html>
+```
+
+### How this works:
+1.  **The Fetch API:** The `attackMonster()` function sends a POST request to your Python `/combat/attack` route. It waits for the JSON response (victory, or status update).
+2.  **Dynamic Updates:** When the server returns `status: "victory"`, it refreshes the page to trigger a new encounter. If the monster is still alive, it simply logs the damage taken.
+3.  **Visual Feedback:** The `hp-fill` bars provide instant visual representation of the battle state.
+
+### Next Steps for you:
+*   **Create `index.html`:** You will want a main dashboard where players can see their full inventory and click a button to "Enter Dungeon".
+*   **Database Seeding:** Don't forget to create at least one `Dungeon` and `Monster` entry in your database (via the Python shell) before you test this, otherwise the page will look empty!
+
+Do you need help with the **Admin Dashboard** or **inventory management** logic next?

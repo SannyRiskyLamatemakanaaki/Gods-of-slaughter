@@ -1,0 +1,98 @@
+That logic is excellent for real-time multiplayer combat. Since we established a Python/Flask structure previously, I recommend using **Flask-SocketIO**. This will allow you to keep your robust Python backend while gaining the real-time WebSocket functionality you implemented in your snippet.
+
+Here is the implementation of those mechanics adapted for your existing `models.py` structure.
+
+### 1. Updated `services.py` (Combat & Logic)
+This acts as the bridge between your database and the game actions.
+
+```python
+# services.py
+from models import db, Item, Player, CombatLog
+from flask import current_app
+
+def merge_items(player, item1_id, item2_id):
+    """Merge two identical items into one higher-grade item."""
+    item1 = Item.query.filter_by(id=item1_id, owner_id=player.id).first()
+    item2 = Item.query.filter_by(id=item2_id, owner_id=player.id).first()
+
+    # Merge logic: Items must be the same and not Legendary
+    if item1 and item2 and item1.name == item2.name and item1.grade != "Legendary":
+        grades = ["Common", "Rare", "Epic", "Legendary"]
+        current_grade_idx = grades.index(item1.grade)
+        
+        # Upgrade
+        item1.grade = grades[current_grade_idx + 1]
+        item1.attack_bonus += 5 # Example stats upgrade
+        
+        db.session.delete(item2)
+        db.session.commit()
+        return {"success": True, "new_item": item1.to_dict()}
+    
+    return {"success": False, "message": "Items cannot be merged."}
+
+def handle_pvp(attacker, defender):
+    """Logic for player vs player combat."""
+    # Deduct damage
+    damage = max(1, attacker.attack_power - defender.defense)
+    defender.hp = max(0, defender.hp - damage)
+    
+    # Check for death
+    if defender.hp == 0:
+        # Transfer loot/gold (Example: 10% of defender's gold)
+        stolen_gold = int(defender.gold * 0.1)
+        defender.gold -= stolen_gold
+        attacker.gold += stolen_gold
+        attacker.total_players_killed += 1
+        
+        # Log it
+        log = CombatLog(player_id=attacker.id, action_type="pvp_kill", 
+                        details=f"Killed {defender.username} and stole {stolen_gold} gold.")
+        db.session.add(log)
+        
+    db.session.commit()
+    return {"damage": damage, "target_hp": defender.hp}
+
+def process_cashout_request(player, amount, method, fee_rate=0.05):
+    """Process withdrawal with a platform fee for the owner."""
+    if player.gold >= amount:
+        fee = int(amount * fee_rate)
+        payout = amount - fee
+        
+        player.gold -= amount
+        # Record the transaction
+        # In a real app, 'fee' goes to the game_owner_account
+        db.session.commit()
+        return {"status": "success", "payout": payout, "owner_earnings": fee}
+    
+    return {"status": "fail", "message": "Insufficient gold."}
+```
+
+### 2. Implementation with SocketIO
+In your `app.py`, you can now hook these up to handle the real-time requests from the client:
+
+```python
+from flask_socketio import SocketIO, emit
+
+socketio = SocketIO(app)
+
+@socketio.on('merge_weapons')
+def on_merge(data):
+    player = get_current_user() # Helper to get user from session
+    result = merge_items(player, data['item1_id'], data['item2_id'])
+    emit('merge_response', result)
+
+@socketio.on('pvp_attack')
+def on_attack(data):
+    attacker = get_current_user()
+    defender = Player.query.get(data['target_id'])
+    result = handle_pvp(attacker, defender)
+    emit('combat_update', result, room=defender.id) # Notify target
+```
+
+### 3. Monetization/Owner Hook
+To ensure you (the owner) earn from platform activity, I have added the `fee_rate` in the `process_cashout_request` function above. Every time a player cashes out, a small percentage is deducted and can be allocated to your system wallet.
+
+**Would you like to:**
+1.  **Generate the `app.py`** integrating these SocketIO routes with the rest of the Flask app?
+2.  **Focus on the UI/Frontend** to visualize the dungeon or the weapon merging screen?
+3.  **Refine the Admin Dashboard** where you can track total player gold, cashout requests, and your earned fees?

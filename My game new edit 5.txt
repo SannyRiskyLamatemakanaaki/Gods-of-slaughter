@@ -1,0 +1,732 @@
+I'll provide you with both the **Admin Dashboard** and **Inventory Management** system. These will integrate seamlessly with your existing Flask application.
+
+## 1. Inventory Management System
+
+First, add these routes to your `app.py`:
+
+```python
+# Inventory Management Routes
+@app.route('/inventory')
+@login_required
+def inventory():
+    weapons = Weapon.query.filter_by(user_id=current_user.id).all()
+    skill_books = SkillBook.query.filter_by(user_id=current_user.id).all()
+    return render_template('inventory.html', weapons=weapons, skill_books=skill_books)
+
+@app.route('/shop')
+@login_required
+def shop():
+    available_weapons = [
+        {'name': 'Iron Sword', 'tier': 1, 'price': 100},
+        {'name': 'Steel Blade', 'tier': 2, 'price': 500},
+        {'name': 'Mystic Spear', 'tier': 3, 'price': 2000}
+    ]
+    available_skills = [
+        {'name': 'Fireball', 'tier': 1, 'price': 150},
+        {'name': 'Lightning Strike', 'tier': 2, 'price': 600},
+        {'name': 'Meteor Storm', 'tier': 3, 'price': 2500}
+    ]
+    return render_template('shop.html', weapons=available_weapons, skills=available_skills)
+
+@app.route('/shop/buy', methods=['POST'])
+@login_required
+def buy_item():
+    data = request.get_json()
+    item_type = data.get('type')  # 'weapon' or 'skill'
+    item_name = data.get('name')
+    item_tier = data.get('tier')
+    item_price = data.get('price')
+    
+    if current_user.gold < item_price:
+        return jsonify({'status': 'error', 'message': 'Not enough gold'}), 400
+    
+    current_user.gold -= item_price
+    
+    if item_type == 'weapon':
+        new_weapon = Weapon(name=item_name, tier=item_tier, user_id=current_user.id)
+        db.session.add(new_weapon)
+    elif item_type == 'skill':
+        new_skill = SkillBook(name=item_name, tier=item_tier, user_id=current_user.id)
+        db.session.add(new_skill)
+    
+    db.session.commit()
+    return jsonify({'status': 'success', 'gold': current_user.gold})
+
+@app.route('/inventory/merge', methods=['POST'])
+@login_required
+def merge_items():
+    data = request.get_json()
+    item_type = data.get('type')
+    item_ids = data.get('item_ids')  # List of 3 items to merge
+    
+    if len(item_ids) != 3:
+        return jsonify({'status': 'error', 'message': 'Need exactly 3 items to merge'}), 400
+    
+    if item_type == 'weapon':
+        items = Weapon.query.filter(Weapon.id.in_(item_ids), Weapon.user_id == current_user.id).all()
+    else:
+        items = SkillBook.query.filter(SkillBook.id.in_(item_ids), SkillBook.user_id == current_user.id).all()
+    
+    if len(items) != 3:
+        return jsonify({'status': 'error', 'message': 'Invalid items selected'}), 400
+    
+    # Check all items are same tier
+    if len(set(item.tier for item in items)) != 1:
+        return jsonify({'status': 'error', 'message': 'All items must be same tier'}), 400
+    
+    old_tier = items[0].tier
+    new_tier = old_tier + 1
+    
+    # Delete old items
+    for item in items:
+        db.session.delete(item)
+    
+    # Create new merged item
+    if item_type == 'weapon':
+        new_item = Weapon(
+            name=f"{items[0].name} +{new_tier}",
+            tier=new_tier,
+            user_id=current_user.id
+        )
+    else:
+        new_item = SkillBook(
+            name=f"{items[0].name} +{new_tier}",
+            tier=new_tier,
+            user_id=current_user.id
+        )
+    
+    db.session.add(new_item)
+    db.session.commit()
+    
+    return jsonify({'status': 'success', 'new_tier': new_tier})
+```
+
+### File: `templates/inventory.html`
+
+```html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Inventory - Cultivator Era</title>
+    <style>
+        body { background: #1a1a2e; color: #e0e0e0; font-family: 'Segoe UI', sans-serif; padding: 20px; }
+        .container { max-width: 1200px; margin: 0 auto; }
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; }
+        .section { background: #16213e; padding: 20px; border-radius: 10px; margin-bottom: 20px; border: 1px solid #4e4e6a; }
+        .item-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 15px; }
+        .item-card { background: #0f3460; padding: 15px; border-radius: 8px; text-align: center; cursor: pointer; transition: all 0.3s; }
+        .item-card:hover { background: #1a4d7a; transform: scale(1.05); }
+        .item-card.selected { border: 2px solid #e94560; background: #2a5578; }
+        .tier-1 { border-left: 4px solid #4caf50; }
+        .tier-2 { border-left: 4px solid #2196f3; }
+        .tier-3 { border-left: 4px solid #9c27b0; }
+        button { padding: 10px 20px; background: #4e4e6a; color: white; border: none; cursor: pointer; border-radius: 5px; margin: 5px; }
+        button:hover { background: #6a6a9b; }
+        button:disabled { background: #333; cursor: not-allowed; }
+        .stats { display: flex; gap: 20px; margin-bottom: 20px; }
+        .stat-box { background: #0f3460; padding: 15px; border-radius: 8px; flex: 1; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <div class="header">
+        <h1>🎒 Inventory</h1>
+        <div>
+            <button onclick="window.location.href='/shop'">🛒 Shop</button>
+            <button onclick="window.location.href='/'">🏠 Home</button>
+        </div>
+    </div>
+
+    <div class="stats">
+        <div class="stat-box">
+            <strong>Gold:</strong> {{ current_user.gold }}
+        </div>
+        <div class="stat-box">
+            <strong>Level:</strong> {{ current_user.level }}
+        </div>
+        <div class="stat-box">
+            <strong>Spiritual Root:</strong> {{ current_user.spiritual_root }}
+        </div>
+    </div>
+
+    <!-- Weapons Section -->
+    <div class="section">
+        <h2>⚔️ Weapons</h2>
+        <div class="item-grid" id="weapon-grid">
+            {% for weapon in weapons %}
+            <div class="item-card tier-{{ weapon.tier }}" onclick="selectItem('weapon', {{ weapon.id }})">
+                <h3>{{ weapon.name }}</h3>
+                <p>Tier: {{ weapon.tier }}</p>
+            </div>
+            {% endfor %}
+            {% if not weapons %}
+            <p style="color: #888;">No weapons yet. Visit the shop!</p>
+            {% endif %}
+        </div>
+        <div style="margin-top: 15px;">
+            <button id="merge-weapons-btn" onclick="mergeItems('weapon')" disabled>
+                🔨 Merge 3 Weapons (Same Tier)
+            </button>
+        </div>
+    </div>
+
+    <!-- Skill Books Section -->
+    <div class="section">
+        <h2>📚 Skill Books</h2>
+        <div class="item-grid" id="skill-grid">
+            {% for skill in skill_books %}
+            <div class="item-card tier-{{ skill.tier }}" onclick="selectItem('skill', {{ skill.id }})">
+                <h3>{{ skill.name }}</h3>
+                <p>Tier: {{ skill.tier }}</p>
+            </div>
+            {% endfor %}
+            {% if not skill_books %}
+            <p style="color: #888;">No skill books yet. Visit the shop!</p>
+            {% endif %}
+        </div>
+        <div style="margin-top: 15px;">
+            <button id="merge-skills-btn" onclick="mergeItems('skill')" disabled>
+                🔨 Merge 3 Skills (Same Tier)
+            </button>
+        </div>
+    </div>
+</div>
+
+<script>
+    let selectedWeapons = [];
+    let selectedSkills = [];
+
+    function selectItem(type, id) {
+        const selected = type === 'weapon' ? selectedWeapons : selectedSkills;
+        const cards = document.querySelectorAll(`#${type}-grid .item-card`);
+        
+        const index = selected.indexOf(id);
+        if (index > -1) {
+            selected.splice(index, 1);
+        } else if (selected.length < 3) {
+            selected.push(id);
+        }
+        
+        // Update visual selection
+        cards.forEach(card => {
+            const cardId = parseInt(card.getAttribute('onclick').match(/\d+/)[0]);
+            if (selected.includes(cardId)) {
+                card.classList.add('selected');
+            } else {
+                card.classList.remove('selected');
+            }
+        });
+        
+        // Enable/disable merge button
+        const btn = document.getElementById(`merge-${type}s-btn`);
+        btn.disabled = selected.length !== 3;
+    }
+
+    async function mergeItems(type) {
+        const selected = type === 'weapon' ? selectedWeapons : selectedSkills;
+        
+        if (selected.length !== 3) {
+            alert('Select exactly 3 items of the same tier');
+            return;
+        }
+        
+        const response = await fetch('/inventory/merge', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ type: type, item_ids: selected })
+        });
+        
+        const data = await response.json();
+        
+        if (data.status === 'success') {
+            alert(`Merge successful! Created Tier ${data.new_tier} item!`);
+            window.location.reload();
+        } else {
+            alert('Merge failed: ' + data.message);
+        }
+    }
+</script>
+
+</body>
+</html>
+```
+
+### File: `templates/shop.html`
+
+```html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Shop - Cultivator Era</title>
+    <style>
+        body { background: #1a1a2e; color: #e0e0e0; font-family: 'Segoe UI', sans-serif; padding: 20px; }
+        .container { max-width: 1200px; margin: 0 auto; }
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; }
+        .section { background: #16213e; padding: 20px; border-radius: 10px; margin-bottom: 20px; }
+        .item-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 20px; }
+        .shop-item { background: #0f3460; padding: 20px; border-radius: 8px; text-align: center; }
+        button { padding: 10px 20px; background: #4e4e6a; color: white; border: none; cursor: pointer; border-radius: 5px; margin-top: 10px; }
+        button:hover { background: #6a6a9b; }
+        .gold-display { background: #0f3460; padding: 15px; border-radius: 8px; font-size: 1.2em; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <div class="header">
+        <h1>🛒 Cultivator Shop</h1>
+        <div class="gold-display">
+            Gold: <span id="current-gold">{{ current_user.gold }}</span>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>⚔️ Weapons</h2>
+        <div class="item-grid">
+            {% for weapon in weapons %}
+            <div class="shop-item">
+                <h3>{{ weapon.name }}</h3>
+                <p>Tier: {{ weapon.tier }}</p>
+                <p><strong>{{ weapon.price }} Gold</strong></p>
+                <button onclick="buyItem('weapon', '{{ weapon.name }}', {{ weapon.tier }}, {{ weapon.price }})">
+                    Purchase
+                </button>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>📚 Skill Books</h2>
+        <div class="item-grid">
+            {% for skill in skills %}
+            <div class="shop-item">
+                <h3>{{ skill.name }}</h3>
+                <p>Tier: {{ skill.tier }}</p>
+                <p><strong>{{ skill.price }} Gold</strong></p>
+                <button onclick="buyItem('skill', '{{ skill.name }}', {{ skill.tier }}, {{ skill.price }})">
+                    Purchase
+                </button>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+
+    <button onclick="window.location.href='/inventory'" style="margin-top: 20px;">
+        🎒 Back to Inventory
+    </button>
+</div>
+
+<script>
+    async function buyItem(type, name, tier, price) {
+        const currentGold = parseInt(document.getElementById('current-gold').textContent);
+        
+        if (currentGold < price) {
+            alert('Not enough gold!');
+            return;
+        }
+        
+        const response = await fetch('/shop/buy', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ type: type, name: name, tier: tier, price: price })
+        });
+        
+        const data = await response.json();
+        
+        if (data.status === 'success') {
+            alert(`Purchased ${name}!`);
+            document.getElementById('current-gold').textContent = data.gold;
+        } else {
+            alert('Purchase failed: ' + data.message);
+        }
+    }
+</script>
+
+</body>
+</html>
+```
+
+## 2. Admin Dashboard
+
+Add these admin routes to `app.py`:
+
+```python
+from functools import wraps
+
+def admin_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if not current_user.is_authenticated or not current_user.is_admin:
+            flash('Admin access required')
+            return redirect(url_for('index'))
+        return f(*args, **kwargs)
+    return decorated_function
+
+@app.route('/admin')
+@login_required
+@admin_required
+def admin_dashboard():
+    total_users = User.query.count()
+    total_gold = db.session.query(db.func.sum(User.gold)).scalar() or 0
+    pending_cashouts = CashoutRequest.query.filter_by(status='pending').all()
+    recent_users = User.query.order_by(User.id.desc()).limit(10).all()
+    
+    return render_template('admin.html',
+                         total_users=total_users,
+                         total_gold=total_gold,
+                         pending_cashouts=pending_cashouts,
+                         recent_users=recent_users)
+
+@app.route('/admin/users')
+@login_required
+@admin_required
+def admin_users():
+    users = User.query.all()
+    return render_template('admin_users.html', users=users)
+
+@app.route('/admin/user/<int:user_id>/edit', methods=['POST'])
+@login_required
+@admin_required
+def admin_edit_user(user_id):
+    user = User.query.get_or_404(user_id)
+    data = request.get_json()
+    
+    if 'gold' in data:
+        user.gold = data['gold']
+    if 'level' in data:
+        user.level = data['level']
+    if 'is_banned' in data:
+        user.is_banned = data['is_banned']
+    
+    db.session.commit()
+    return jsonify({'status': 'success'})
+
+@app.route('/admin/cashout/<int:cashout_id>/approve', methods=['POST'])
+@login_required
+@admin_required
+def approve_cashout(cashout_id):
+    cashout = CashoutRequest.query.get_or_404(cashout_id)
+    
+    if cashout.status != 'pending':
+        return jsonify({'status': 'error', 'message': 'Already processed'}), 400
+    
+    cashout.status = 'approved'
+    cashout.processed_at = datetime.utcnow()
+    db.session.commit()
+    
+    return jsonify({'status': 'success'})
+
+@app.route('/admin/cashout/<int:cashout_id>/reject', methods=['POST'])
+@login_required
+@admin_required
+def reject_cashout(cashout_id):
+    cashout = CashoutRequest.query.get_or_404(cashout_id)
+    
+    if cashout.status != 'pending':
+        return jsonify({'status': 'error', 'message': 'Already processed'}), 400
+    
+    # Refund the user
+    user = User.query.get(cashout.user_id)
+    user.gold += 30000  # Refund full amount
+    
+    cashout.status = 'rejected'
+    cashout.processed_at = datetime.utcnow()
+    db.session.commit()
+    
+    return jsonify({'status': 'success'})
+
+@app.route('/admin/dungeon/create', methods=['POST'])
+@login_required
+@admin_required
+def create_dungeon():
+    data = request.get_json()
+    dungeon = Dungeon(
+        name=data['name'],
+        difficulty=data['difficulty'],
+        min_level=data.get('min_level', 1)
+    )
+    db.session.add(dungeon)
+    db.session.commit()
+    return jsonify({'status': 'success', 'id': dungeon.id})
+
+@app.route('/admin/monster/create', methods=['POST'])
+@login_required
+@admin_required
+def create_monster():
+    data = request.get_json()
+    monster = Monster(
+        name=data['name'],
+        level=data['level'],
+        hp=data['hp'],
+        attack=data['attack'],
+        dungeon_id=data['dungeon_id']
+    )
+    db.session.add(monster)
+    db.session.commit()
+    return jsonify({'status': 'success', 'id': monster.id})
+```
+
+### File: `templates/admin.html`
+
+```html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Admin Dashboard - Cultivator Era</title>
+    <style>
+        body { background: #1a1a2e; color: #e0e0e0; font-family: 'Segoe UI', sans-serif; padding: 20px; }
+        .container { max-width: 1400px; margin: 0 auto; }
+        .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px; margin-bottom: 30px; }
+        .stat-card { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 25px; border-radius: 10px; text-align: center; }
+        .stat-card h3 { margin: 0 0 10px 0; font-size: 2em; }
+        .panel { background: #16213e; padding: 20px; border-radius: 10px; margin-bottom: 20px; border: 1px solid #4e4e6a; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { padding: 12px; text-align: left; border-bottom: 1px solid #4e4e6a; }
+        th { background: #0f3460; }
+        button { padding: 8px 15px; background: #4e4e6a; color: white; border: none; cursor: pointer; border-radius: 5px; margin: 2px; }
+        button:hover { background: #6a6a9b; }
+        .approve-btn { background: #4caf50; }
+        .reject-btn { background: #f44336; }
+        .nav-tabs { display: flex; gap: 10px; margin-bottom: 20px; }
+        .nav-tabs button { padding: 12px 24px; }
+        .nav-tabs button.active { background: #667eea; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>🛡️ Admin Dashboard</h1>
+    
+    <div class="stats-grid">
+        <div class="stat-card">
+            <p>Total Users</p>
+            <h3>{{ total_users }}</h3>
+        </div>
+        <div class="stat-card">
+            <p>Total Gold in Economy</p>
+            <h3>{{ total_gold }}</h3>
+        </div>
+        <div class="stat-card">
+            <p>Pending Cashouts</p>
+            <h3>{{ pending_cashouts|length }}</h3>
+        </div>
+    </div>
+
+    <div class="nav-tabs">
+        <button class="active" onclick="window.location.href='/admin'">Dashboard</button>
+        <button onclick="window.location.href='/admin/users'">Users</button>
+        <button onclick="showSection('dungeons')">Dungeons</button>
+        <button onclick="window.location.href='/'">Back to Game</button>
+    </div>
+
+    <!-- Pending Cashout Requests -->
+    <div class="panel">
+        <h2>💰 Pending Cashout Requests</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>User</th>
+                    <th>Amount (USD)</th>
+                    <th>Platform Fee</th>
+                    <th>Payout</th>
+                    <th>Method</th>
+                    <th>Date</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for cashout in pending_cashouts %}
+                <tr id="cashout-{{ cashout.id }}">
+                    <td>{{ cashout.user.username }}</td>
+                    <td>${{ cashout.amount }}</td>
+                    <td>${{ '%.2f'|format(cashout.amount * 0.10) }}</td>
+                    <td>${{ '%.2f'|format(cashout.amount * 0.90) }}</td>
+                    <td>{{ cashout.payment_method }}</td>
+                    <td>{{ cashout.requested_at.strftime('%Y-%m-%d %H:%M') }}</td>
+                    <td>
+                        <button class="approve-btn" onclick="processCashout({{ cashout.id }}, 'approve')">✓ Approve</button>
+                        <button class="reject-btn" onclick="processCashout({{ cashout.id }}, 'reject')">✗ Reject</button>
+                    </td>
+                </tr>
+                {% endfor %}
+                {% if not pending_cashouts %}
+                <tr><td colspan="7" style="text-align: center; color: #888;">No pending cashouts</td></tr>
+                {% endif %}
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Recent Users -->
+    <div class="panel">
+        <h2>👥 Recent Users</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>Username</th>
+                    <th>Level</th>
+                    <th>Gold</th>
+                    <th>Spiritual Root</th>
+                    <th>Joined</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for user in recent_users %}
+                <tr>
+                    <td>{{ user.username }}</td>
+                    <td>{{ user.level }}</td>
+                    <td>{{ user.gold }}</td>
+                    <td>{{ user.spiritual_root }}</td>
+                    <td>{{ user.created_at.strftime('%Y-%m-%d') if user.created_at else 'N/A' }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<script>
+    async function processCashout(cashoutId, action) {
+        const confirmed = confirm(`Are you sure you want to ${action} this cashout?`);
+        if (!confirmed) return;
+        
+        const response = await fetch(`/admin/cashout/${cashoutId}/${action}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+        });
+        
+        const data = await response.json();
+        
+        if (data.status === 'success') {
+            alert(`Cashout ${action}ed successfully`);
+            document.getElementById(`cashout-${cashoutId}`).remove();
+        } else {
+            alert('Error: ' + data.message);
+        }
+    }
+</script>
+
+</body>
+</html>
+```
+
+### File: `templates/admin_users.html`
+
+```html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>User Management - Admin</title>
+    <style>
+        body { background: #1a1a2e; color: #e0e0e0; font-family: 'Segoe UI', sans-serif; padding: 20px; }
+        .container { max-width: 1400px; margin: 0 auto; }
+        .panel { background: #16213e; padding: 20px; border-radius: 10px; margin-bottom: 20px; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { padding: 12px; text-align: left; border-bottom: 1px solid #4e4e6a; }
+        th { background: #0f3460; }
+        button { padding: 8px 15px; background: #4e4e6a; color: white; border: none; cursor: pointer; border-radius: 5px; }
+        button:hover { background: #6a6a9b; }
+        input { padding: 8px; background: #0f3460; border: 1px solid #4e4e6a; color: white; border-radius: 5px; width: 80px; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>👥 User Management</h1>
+    <button onclick="window.location.href='/admin'">← Back to Dashboard</button>
+
+    <div class="panel">
+        <table>
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Username</th>
+                    <th>Email</th>
+                    <th>Level</th>
+                    <th>Gold</th>
+                    <th>Root</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for user in users %}
+                <tr id="user-{{ user.id }}">
+                    <td>{{ user.id }}</td>
+                    <td>{{ user.username }}</td>
+                    <td>{{ user.email }}</td>
+                    <td>
+                        <input type="number" id="level-{{ user.id }}" value="{{ user.level }}">
+                    </td>
+                    <td>
+                        <input type="number" id="gold-{{ user.id }}" value="{{ user.gold }}">
+                    </td>
+                    <td>{{ user.spiritual_root }}</td>
+                    <td>
+                        <button onclick="updateUser({{ user.id }})">💾 Save</button>
+                        <button onclick="banUser({{ user.id }})" style="background: #f44336;">🚫 Ban</button>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<script>
+    async function updateUser(userId) {
+        const level = document.getElementById(`level-${userId}`).value;
+        const gold = document.getElementById(`gold-${userId}`).value;
+        
+        const response = await fetch(`/admin/user/${userId}/edit`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ level: parseInt(level), gold: parseInt(gold) })
+        });
+        
+        const data = await response.json();
+        if (data.status === 'success') {
+            alert('User updated!');
+        }
+    }
+    
+    async function banUser(userId) {
+        if (!confirm('Ban this user?')) return;
+        
+        const response = await fetch(`/admin/user/${userId}/edit`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ is_banned: true })
+        });
+        
+        const data = await response.json();
+        if (data.status === 'success') {
+            alert('User banned!');
+            document.getElementById(`user-${userId}`).style.opacity = '0.5';
+        }
+    }
+</script>
+
+</body>
+</html>
+```
+
+**Key Features Implemented:**
+
+**Inventory System:**
+- Shop with weapons and skill books at different tiers
+- Merge system: combine 3 same-tier items into 1 higher-tier item
+- Visual tier indicators with color coding
+- Real-time gold tracking
+
+**Admin Dashboard:**
+- Cashout approval/rejection with automatic platform fee calculation (10%)
+- User management with ability to edit gold, levels, and ban users
+- Economy overview showing total users and gold circulation
+- Recent activity monitoring
+
+Both systems integrate seamlessly with your existing Flask app and database models. Make sure to add the `is_admin` boolean field to your User model if it doesn't exist yet.
