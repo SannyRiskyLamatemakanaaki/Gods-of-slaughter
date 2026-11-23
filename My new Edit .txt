@@ -1,0 +1,150 @@
+It sounds like you want to "reset and simplify." Cleaning up the file structure is a great move—it makes redeploying to Railway or GitHub much smoother because you have a clear, "source of truth" map of your project.
+
+To make this easy to manage, we will consolidate your logic. I will structure this so you can copy and paste into your files, and I'll provide a single **`app.py`** (backend), a single **`templates/game.html`** (the combined UI), and your **`requirements.txt`**.
+
+### 1. The Backend (`app.py`)
+This combines the Core, Mission, and Trading logic.
+
+```python
+# app.py
+from flask import Flask, render_template, request, jsonify
+from flask_sqlalchemy import SQLAlchemy
+from flask_login import LoginManager, UserMixin, login_required, current_user
+from datetime import datetime, timedelta
+
+app = Flask(__name__)
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///game.db'
+app.config['SECRET_KEY'] = 'your-secret-key-here' # IMPORTANT: Change this!
+db = SQLAlchemy(app)
+login_manager = LoginManager(app)
+
+class User(UserMixin, db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String(50), unique=True)
+    gold = db.Column(db.Integer, default=100)
+
+class Mission(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer)
+    name = db.Column(db.String(100))
+    reward = db.Column(db.Integer)
+    end_time = db.Column(db.DateTime)
+    completed = db.Column(db.Boolean, default=False)
+
+@app.route('/')
+def index():
+    return render_template('game.html')
+
+@app.route('/accept_mission', methods=['POST'])
+@login_required
+def accept_mission():
+    # Example: Simple 1-minute mission
+    new_mission = Mission(
+        user_id=current_user.id, 
+        name="Asteroid Mining", 
+        reward=50, 
+        end_time=datetime.utcnow() + timedelta(minutes=1)
+    )
+    db.session.add(new_mission)
+    db.session.commit()
+    return jsonify({"status": "Mission Accepted!"})
+
+@app.route('/transfer_credits', methods=['POST'])
+@login_required
+def transfer_credits():
+    data = request.json
+    recipient = User.query.filter_by(username=data['username']).first()
+    amount = int(data['amount'])
+    if recipient and current_user.gold >= amount:
+        current_user.gold -= amount
+        recipient.gold += amount
+        db.session.commit()
+        return jsonify({"status": "Transfer Success"})
+    return jsonify({"status": "Failed"}), 400
+
+if __name__ == '__main__':
+    with app.app_context():
+        db.create_all()
+    app.run(debug=True)
+```
+
+### 2. The Frontend (`templates/game.html`)
+This integrates the Dashboard, Mission Board, and Trade UI into one clean file.
+
+```html
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Gods of Slaughter</title>
+    <style>
+        body { background: #0b0e14; color: #00d4ff; font-family: 'Courier New', monospace; padding: 20px; }
+        .panel { background: #1c222d; border: 1px solid #00d4ff; padding: 20px; margin-bottom: 20px; border-radius: 8px; }
+        button { background: #00ff41; border: none; padding: 10px; cursor: pointer; color: black; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <div class="panel">
+        <h1>COMMAND CENTER</h1>
+        <p>Credits: <span id="credit-count">{{ current_user.gold }}</span></p>
+    </div>
+
+    <div class="panel">
+        <h2>Mission Board</h2>
+        <button onclick="acceptMission()">Start Asteroid Mining (50 Credits)</button>
+    </div>
+
+    <div class="panel">
+        <h2>Trade Credits</h2>
+        <input type="text" id="targetUser" placeholder="Username">
+        <input type="number" id="amount" placeholder="Amount">
+        <button onclick="transferCredits()">Send Credits</button>
+    </div>
+
+    <script>
+        function acceptMission() {
+            fetch('/accept_mission', { method: 'POST' })
+            .then(r => r.json()).then(data => alert(data.status));
+        }
+
+        function transferCredits() {
+            const username = document.getElementById('targetUser').value;
+            const amount = document.getElementById('amount').value;
+            fetch('/transfer_credits', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({username: username, amount: amount})
+            }).then(r => r.json()).then(data => alert(data.status));
+        }
+    </script>
+</body>
+</html>
+```
+
+### 3. Requirements File (`requirements.txt`)
+Create this file exactly as named to ensure the server installs everything needed.
+
+```text
+Flask
+Flask-SQLAlchemy
+Flask-Login
+gunicorn
+```
+
+### Steps to Reset and Deploy to Railway:
+
+1.  **Cleanup Folder:** Delete your old folder. Create a new folder named `gods-of-slaughter`.
+2.  **Organize:**
+    *   Place `app.py` in the root.
+    *   Place `requirements.txt` in the root.
+    *   Create a folder named `templates` and put `game.html` inside it.
+3.  **GitHub:**
+    *   Initialize git (`git init`) and upload this new folder structure to your `gods-of-slaughter` repository.
+4.  **Railway Deployment:**
+    *   Go to Railway.app.
+    *   Click **"Deploy from GitHub repo."**
+    *   Select your `gods-of-slaughter` repo.
+    *   Railway will automatically detect `requirements.txt` and `app.py`.
+    *   **Crucial:** Ensure your `Procfile` exists in the root with this content:
+        `web: gunicorn app:app`
+
+This structure is now modular and clean. You have the backend logic, the unified UI, and the server instructions all separated correctly. Let me know if you need help with the `Procfile` content or setting up the database init script again!
